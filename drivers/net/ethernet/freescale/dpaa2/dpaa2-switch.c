@@ -133,6 +133,7 @@ static u16 dpaa2_switch_port_set_fdb(struct ethsw_port_priv *port_priv,
 	u16 fdb_id_old = port_priv->fdb->fdb_id;
 	struct dpaa2_switch_fdb *fdb = NULL;
 	struct list_head *iter, *iter2;
+	bool last_fdb_user = true;
 	int i;
 
 	/* If we leave a bridge (bridge_dev is NULL), find an unused
@@ -175,23 +176,36 @@ static u16 dpaa2_switch_port_set_fdb(struct ethsw_port_priv *port_priv,
 			}
 
 		} else {
-			fdb = dpaa2_switch_fdb_get_unused(port_priv->ethsw_data);
+			/* First verify if this is the last port to leave this bridge */
+			for (i = 0; i < ethsw->sw_attr.num_ifs; i++) {
+				if (!ethsw->ports[i] || ethsw->ports[i] == port_priv)
+					continue;
+				if (ethsw->ports[i]->fdb == port_priv->fdb) {
+					last_fdb_user = false;
+					break;
+				}
+			}
 
-			/* If there is no unused FDB, we must be the last port that
-			 * leaves the last bridge, all the others are standalone. We
-			 * can just keep the FDB that we already have.
-			 */
-
-			if (!fdb) {
+			/* If this is the last user of the FDB, just keep using it. */
+			if (last_fdb_user) {
 				port_priv->fdb->bridge_dev = NULL;
 				return 0;
 			}
+
+			/* Since we are not the last port which leaves a bridge,
+			 * acquire a new FDB and use it. The number of FDBs is sized to
+			 * accommodate all switch ports as standalone, each with its
+			 * private FDB, which means that dpaa2_switch_fdb_get_unused()
+			 * must succeed here. WARN if not.
+			 */
+			fdb = dpaa2_switch_fdb_get_unused(port_priv->ethsw_data);
+			if (WARN_ON(!fdb))
+				return 0;
 
 			port_priv->fdb = fdb;
 			port_priv->fdb->in_use = true;
 			port_priv->fdb->bridge_dev = NULL;
 		}
-
 		return 0;
 	}
 
