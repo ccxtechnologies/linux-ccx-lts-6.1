@@ -4751,6 +4751,7 @@ static void dpaa2_eth_disconnect_mac(struct dpaa2_eth_priv *priv)
 
 	dpaa2_mac_close(mac);
 	dpaa2_mac_driver_attach(mac->mc_dev);
+	put_device(&mac->mc_dev->dev);
 	kfree(mac);
 }
 
