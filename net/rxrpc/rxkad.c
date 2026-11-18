@@ -780,7 +780,7 @@ static int rxkad_issue_challenge(struct rxrpc_connection *conn)
 		return -EAGAIN;
 	}
 
-	conn->params.peer->last_tx_at = ktime_get_seconds();
+	rxrpc_peer_mark_tx(conn->params.peer);
 	trace_rxrpc_tx_packet(conn->debug_id, &whdr,
 			      rxrpc_tx_point_rxkad_challenge);
 	_leave(" = 0");
@@ -838,7 +838,7 @@ static int rxkad_send_response(struct rxrpc_connection *conn,
 		return -EAGAIN;
 	}
 
-	conn->params.peer->last_tx_at = ktime_get_seconds();
+	rxrpc_peer_mark_tx(conn->params.peer);
 	_leave(" = 0");
 	return 0;
 }
@@ -1013,8 +1013,13 @@ static int rxkad_decrypt_ticket(struct rxrpc_connection *conn,
 	sg_init_one(&sg[0], ticket, ticket_len);
 	skcipher_request_set_callback(req, 0, NULL, NULL);
 	skcipher_request_set_crypt(req, sg, sg, ticket_len, iv.x);
-	crypto_skcipher_decrypt(req);
+	ret = crypto_skcipher_decrypt(req);
 	skcipher_request_free(req);
+	if (ret < 0) {
+		abort_code = RXKADBADTICKET;
+		ret = -EPROTO;
+		goto other_error;
+	}
 
 	p = ticket;
 	end = p + ticket_len;
@@ -1306,6 +1311,7 @@ static int rxkad_verify_response(struct rxrpc_connection *conn,
 
 	kfree(ticket);
 	kfree(response);
+	key_put(server_key);
 	_leave(" = 0");
 	return 0;
 

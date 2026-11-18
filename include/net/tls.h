@@ -122,7 +122,8 @@ struct tls_strparser {
 	u32 stopped : 1;
 	u32 copy_mode : 1;
 	u32 mixed_decrypted : 1;
-	u32 msg_ready : 1;
+
+	bool msg_ready;
 
 	struct strp_msg stm;
 
@@ -404,8 +405,12 @@ tls_offload_ctx_tx(const struct tls_context *tls_ctx)
 
 static inline bool tls_sw_has_ctx_tx(const struct sock *sk)
 {
-	struct tls_context *ctx = tls_get_ctx(sk);
+	struct tls_context *ctx;
 
+	if (!sk_is_inet(sk) || !inet_sk(sk)->is_icsk)
+		return false;
+
+	ctx = tls_get_ctx(sk);
 	if (!ctx)
 		return false;
 	return !!tls_sw_ctx_tx(ctx);
@@ -413,8 +418,12 @@ static inline bool tls_sw_has_ctx_tx(const struct sock *sk)
 
 static inline bool tls_sw_has_ctx_rx(const struct sock *sk)
 {
-	struct tls_context *ctx = tls_get_ctx(sk);
+	struct tls_context *ctx;
 
+	if (!sk_is_inet(sk) || !inet_sk(sk)->is_icsk)
+		return false;
+
+	ctx = tls_get_ctx(sk);
 	if (!ctx)
 		return false;
 	return !!tls_sw_ctx_rx(ctx);
@@ -473,6 +482,12 @@ tls_offload_rx_resync_async_request_end(struct sock *sk, __be32 seq)
 
 	atomic64_set(&rx_ctx->resync_async->req,
 		     ((u64)ntohl(seq) << 32) | RESYNC_REQ);
+}
+
+static inline void
+tls_offload_rx_resync_async_request_cancel(struct tls_offload_resync_async *resync_async)
+{
+	atomic64_set(&resync_async->req, 0);
 }
 
 static inline void

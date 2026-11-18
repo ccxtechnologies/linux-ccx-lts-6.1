@@ -773,6 +773,12 @@ static int get_manuf_info(struct edgeport_serial *serial, u8 *buffer)
 	}
 
 	/* Read the descriptor data */
+	if (le16_to_cpu(rom_desc->Size) != sizeof(struct edge_ti_manuf_descriptor)) {
+		dev_err(dev, "unexpected Edge descriptor length: %u\n",
+			le16_to_cpu(rom_desc->Size));
+		status = -EINVAL;
+		goto exit;
+	}
 	status = read_rom(serial, start_address+sizeof(struct ti_i2c_desc),
 					le16_to_cpu(rom_desc->Size), buffer);
 	if (status)
@@ -838,6 +844,11 @@ static int build_i2c_fw_hdr(u8 *header, const struct firmware *fw)
 	/* Pointer to fw_down memory image */
 	img_header = (struct ti_i2c_image_header *)&fw->data[4];
 
+	if (le16_to_cpu(img_header->Length) >
+			buffer_size - sizeof(struct ti_i2c_firmware_rec)) {
+		kfree(buffer);
+		return -EINVAL;
+	}
 	memcpy(buffer + sizeof(struct ti_i2c_firmware_rec),
 		&fw->data[4 + sizeof(struct ti_i2c_image_header)],
 		le16_to_cpu(img_header->Length));
@@ -2421,7 +2432,7 @@ static int edge_tiocmget(struct tty_struct *tty)
 	return result;
 }
 
-static void edge_break(struct tty_struct *tty, int break_state)
+static int edge_break(struct tty_struct *tty, int break_state)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
@@ -2430,10 +2441,15 @@ static void edge_break(struct tty_struct *tty, int break_state)
 
 	if (break_state == -1)
 		bv = 1;	/* On */
+
 	status = ti_do_config(edge_port, UMPC_SET_CLR_BREAK, bv);
-	if (status)
+	if (status) {
 		dev_dbg(&port->dev, "%s - error %d sending break set/clear command.\n",
 			__func__, status);
+		return status;
+	}
+
+	return 0;
 }
 
 static void edge_heartbeat_schedule(struct edgeport_serial *edge_serial)

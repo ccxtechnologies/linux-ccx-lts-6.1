@@ -82,6 +82,10 @@ static const struct key_entry huawei_wmi_keymap[] = {
 	{ KE_KEY,    0x289, { KEY_WLAN } },
 	// Huawei |M| key
 	{ KE_KEY,    0x28a, { KEY_CONFIG } },
+	// HONOR YOYO key
+	{ KE_KEY,    0x28b, { KEY_NOTIFICATION_CENTER } },
+	// HONOR print screen
+	{ KE_KEY,    0x28e, { KEY_PRINT } },
 	// Keyboard backlit
 	{ KE_IGNORE, 0x293, { KEY_KBDILLUMTOGGLE } },
 	{ KE_IGNORE, 0x294, { KEY_KBDILLUMUP } },
@@ -470,7 +474,7 @@ static DEVICE_ATTR_RW(charge_control_start_threshold);
 static DEVICE_ATTR_RW(charge_control_end_threshold);
 static DEVICE_ATTR_RW(charge_control_thresholds);
 
-static int huawei_wmi_battery_add(struct power_supply *battery)
+static int huawei_wmi_battery_add(struct power_supply *battery, struct acpi_battery_hook *hook)
 {
 	int err = 0;
 
@@ -485,7 +489,7 @@ static int huawei_wmi_battery_add(struct power_supply *battery)
 	return err;
 }
 
-static int huawei_wmi_battery_remove(struct power_supply *battery)
+static int huawei_wmi_battery_remove(struct power_supply *battery, struct acpi_battery_hook *hook)
 {
 	device_remove_file(&battery->dev, &dev_attr_charge_control_start_threshold);
 	device_remove_file(&battery->dev, &dev_attr_charge_control_end_threshold);

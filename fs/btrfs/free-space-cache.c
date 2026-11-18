@@ -48,6 +48,11 @@ static void bitmap_clear_bits(struct btrfs_free_space_ctl *ctl,
 			      struct btrfs_free_space *info, u64 offset,
 			      u64 bytes, bool update_stats);
 
+static void btrfs_crc32c_final(u32 crc, u8 *result)
+{
+	put_unaligned_le32(~crc, result);
+}
+
 static void __btrfs_remove_free_space_cache(struct btrfs_free_space_ctl *ctl)
 {
 	struct btrfs_free_space *info;
@@ -563,6 +568,9 @@ static int io_ctl_check_crc(struct btrfs_io_ctl *io_ctl, int index)
 	u32 *tmp, val;
 	u32 crc = ~(u32)0;
 	unsigned offset = 0;
+
+	if (index >= io_ctl->num_pages)
+		return -EIO;
 
 	if (index == 0)
 		offset = sizeof(u32) * io_ctl->num_pages;

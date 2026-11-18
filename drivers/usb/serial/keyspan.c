@@ -599,7 +599,7 @@ struct keyspan_port_private {
 #include "keyspan_usa67msg.h"
 
 
-static void keyspan_break_ctl(struct tty_struct *tty, int break_state)
+static int keyspan_break_ctl(struct tty_struct *tty, int break_state)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct keyspan_port_private 	*p_priv;
@@ -611,7 +611,10 @@ static void keyspan_break_ctl(struct tty_struct *tty, int break_state)
 	else
 		p_priv->break_on = 0;
 
+	/* FIXME: return errors */
 	keyspan_send_setup(port, 0);
+
+	return 0;
 }
 
 
@@ -1185,6 +1188,10 @@ static void usa49wg_indat_callback(struct urb *urb)
 	len = 0;
 
 	while (i < urb->actual_length) {
+		if (urb->actual_length - i < 3) {
+			dev_warn_ratelimited(&urb->dev->dev, "malformed indat packet\n");
+			break;
+		}
 
 		/* Check port number from message */
 		if (data[i] >= serial->num_ports) {

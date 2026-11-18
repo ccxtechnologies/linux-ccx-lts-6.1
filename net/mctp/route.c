@@ -267,6 +267,7 @@ static void mctp_flow_prepare_output(struct sk_buff *skb, struct mctp_dev *dev)
 {
 	struct mctp_sk_key *key;
 	struct mctp_flow *flow;
+	unsigned long flags;
 
 	flow = skb_ext_find(skb, SKB_EXT_MCTP);
 	if (!flow)
@@ -274,12 +275,14 @@ static void mctp_flow_prepare_output(struct sk_buff *skb, struct mctp_dev *dev)
 
 	key = flow->key;
 
-	if (key->dev) {
-		WARN_ON(key->dev != dev);
-		return;
-	}
+	spin_lock_irqsave(&key->lock, flags);
 
-	mctp_dev_set_key(dev, key);
+	if (!key->dev)
+		mctp_dev_set_key(dev, key);
+	else
+		WARN_ON(key->dev != dev);
+
+	spin_unlock_irqrestore(&key->lock, flags);
 }
 #else
 static void mctp_skb_set_flow(struct sk_buff *skb, struct mctp_sk_key *key) {}
@@ -295,8 +298,14 @@ static int mctp_frag_queue(struct mctp_sk_key *key, struct sk_buff *skb)
 		& MCTP_HDR_SEQ_MASK;
 
 	if (!key->reasm_head) {
-		key->reasm_head = skb;
-		key->reasm_tailp = &(skb_shinfo(skb)->frag_list);
+		/* Since we're manipulating the shared frag_list, ensure it isn't
+		 * shared with any other SKBs.
+		 */
+		key->reasm_head = skb_unshare(skb, GFP_ATOMIC);
+		if (!key->reasm_head)
+			return -ENOMEM;
+
+		key->reasm_tailp = &(skb_shinfo(key->reasm_head)->frag_list);
 		key->last_seq = this_seq;
 		return 0;
 	}
@@ -332,6 +341,7 @@ static int mctp_route_input(struct mctp_route *route, struct sk_buff *skb)
 	unsigned long f;
 	u8 tag, flags;
 	int rc;
+	u8 ver;
 
 	msk = NULL;
 	rc = -EINVAL;
@@ -354,7 +364,8 @@ static int mctp_route_input(struct mctp_route *route, struct sk_buff *skb)
 	mh = mctp_hdr(skb);
 	skb_pull(skb, sizeof(struct mctp_hdr));
 
-	if (mh->ver != 1)
+	ver = mh->ver & MCTP_HDR_VER_MASK;
+	if (ver < MCTP_VER_MIN || ver > MCTP_VER_MAX)
 		goto out;
 
 	flags = mh->flags_seq_tag & (MCTP_HDR_FLAG_SOM | MCTP_HDR_FLAG_EOM);
@@ -424,18 +435,26 @@ static int mctp_route_input(struct mctp_route *route, struct sk_buff *skb)
 			/* we can queue without the key lock here, as the
 			 * key isn't observable yet
 			 */
-			mctp_frag_queue(key, skb);
-
-			/* if the key_add fails, we've raced with another
-			 * SOM packet with the same src, dest and tag. There's
-			 * no way to distinguish future packets, so all we
-			 * can do is drop; we'll free the skb on exit from
-			 * this function.
-			 */
-			rc = mctp_key_add(key, msk);
-			if (!rc) {
-				trace_mctp_key_acquire(key);
+			rc = mctp_frag_queue(key, skb);
+			if (rc == -ENOMEM) {
+				/* skb_unshare() has already freed the skb */
 				skb = NULL;
+			} else if (!rc) {
+				/* reasm_head owns the (possibly copied) skb */
+				skb = NULL;
+
+				/* if the key_add fails, we've raced with
+				 * another SOM packet with the same src, dest
+				 * and tag. There's no way to distinguish
+				 * future packets, so all we can do is drop.
+				 */
+				rc = mctp_key_add(key, msk);
+				if (!rc) {
+					trace_mctp_key_acquire(key);
+				} else {
+					kfree_skb(key->reasm_head);
+					key->reasm_head = NULL;
+				}
 			}
 
 			/* we don't need to release key->lock on exit, so
@@ -454,7 +473,8 @@ static int mctp_route_input(struct mctp_route *route, struct sk_buff *skb)
 				key = NULL;
 			} else {
 				rc = mctp_frag_queue(key, skb);
-				if (!rc)
+				/* -ENOMEM: skb_unshare() already freed the skb */
+				if (!rc || rc == -ENOMEM)
 					skb = NULL;
 			}
 		}
@@ -1121,6 +1141,7 @@ static int mctp_pkttype_receive(struct sk_buff *skb, struct net_device *dev,
 	struct mctp_skb_cb *cb;
 	struct mctp_route *rt;
 	struct mctp_hdr *mh;
+	u8 ver;
 
 	rcu_read_lock();
 	mdev = __mctp_dev_get(dev);
@@ -1138,7 +1159,8 @@ static int mctp_pkttype_receive(struct sk_buff *skb, struct net_device *dev,
 
 	/* We have enough for a header; decode and route */
 	mh = mctp_hdr(skb);
-	if (mh->ver < MCTP_VER_MIN || mh->ver > MCTP_VER_MAX)
+	ver = mh->ver & MCTP_HDR_VER_MASK;
+	if (ver < MCTP_VER_MIN || ver > MCTP_VER_MAX)
 		goto err_drop;
 
 	/* source must be valid unicast or null; drop reserved ranges and
@@ -1328,6 +1350,7 @@ static int mctp_fill_rtinfo(struct sk_buff *skb, struct mctp_route *rt,
 		return -EMSGSIZE;
 
 	hdr = nlmsg_data(nlh);
+	memset(hdr, 0, sizeof(*hdr));
 	hdr->rtm_family = AF_MCTP;
 
 	/* we use the _len fields as a number of EIDs, rather than

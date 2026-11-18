@@ -304,15 +304,9 @@ static void capincci_alloc_minor(struct capidev *cdev, struct capincci *np)
 static void capincci_free_minor(struct capincci *np)
 {
 	struct capiminor *mp = np->minorp;
-	struct tty_struct *tty;
 
 	if (mp) {
-		tty = tty_port_tty_get(&mp->port);
-		if (tty) {
-			tty_vhangup(tty);
-			tty_kref_put(tty);
-		}
-
+		tty_port_tty_vhangup(&mp->port);
 		capiminor_free(mp);
 	}
 }
@@ -1077,8 +1071,7 @@ static void capinc_tty_close(struct tty_struct *tty, struct file *filp)
 	tty_port_close(&mp->port, tty, filp);
 }
 
-static int capinc_tty_write(struct tty_struct *tty,
-			    const unsigned char *buf, int count)
+static int capinc_tty_write(struct tty_struct *tty, const u8 *buf, int count)
 {
 	struct capiminor *mp = tty->driver_data;
 	struct sk_buff *skb;

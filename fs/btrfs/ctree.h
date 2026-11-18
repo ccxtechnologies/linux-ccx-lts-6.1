@@ -1626,6 +1626,12 @@ enum {
 	BTRFS_MOUNT_IGNOREDATACSUMS		= (1UL << 30),
 };
 
+/* These mount options require a full read-only fs, no new transaction is allowed. */
+#define BTRFS_MOUNT_FULL_RO_MASK		\
+	(BTRFS_MOUNT_NOLOGREPLAY |		\
+	 BTRFS_MOUNT_IGNOREBADROOTS |		\
+	 BTRFS_MOUNT_IGNOREDATACSUMS)
+
 #define BTRFS_DEFAULT_COMMIT_INTERVAL	(30)
 #define BTRFS_DEFAULT_MAX_INLINE	(2048)
 
@@ -1634,6 +1640,15 @@ enum {
 #define btrfs_raw_test_opt(o, opt)	((o) & BTRFS_MOUNT_##opt)
 #define btrfs_test_opt(fs_info, opt)	((fs_info)->mount_opt & \
 					 BTRFS_MOUNT_##opt)
+
+static inline bool btrfs_is_full_ro(const struct btrfs_fs_info *fs_info)
+{
+	if (!sb_rdonly(fs_info->sb))
+		return false;
+	if (unlikely(fs_info->mount_opt & BTRFS_MOUNT_FULL_RO_MASK))
+		return true;
+	return false;
+}
 
 #define btrfs_set_and_info(fs_info, opt, fmt, args...)			\
 do {									\
@@ -2827,11 +2842,6 @@ static inline u32 btrfs_crc32c(u32 crc, const void *address, unsigned length)
 	return crc32c(crc, address, length);
 }
 
-static inline void btrfs_crc32c_final(u32 crc, u8 *result)
-{
-	put_unaligned_le32(~crc, result);
-}
-
 static inline u64 btrfs_name_hash(const char *name, int len)
 {
        return crc32c((u32)~1, name, len);
@@ -2893,10 +2903,10 @@ struct extent_buffer *btrfs_alloc_tree_block(struct btrfs_trans_handle *trans,
 					     int level, u64 hint,
 					     u64 empty_size,
 					     enum btrfs_lock_nesting nest);
-void btrfs_free_tree_block(struct btrfs_trans_handle *trans,
-			   u64 root_id,
-			   struct extent_buffer *buf,
-			   u64 parent, int last_ref);
+int btrfs_free_tree_block(struct btrfs_trans_handle *trans,
+			  u64 root_id,
+			  struct extent_buffer *buf,
+			  u64 parent, int last_ref);
 int btrfs_alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
 				     struct btrfs_root *root, u64 owner,
 				     u64 offset, u64 ram_bytes,
@@ -2924,65 +2934,6 @@ int btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 			 struct btrfs_ref *generic_ref);
 
 void btrfs_clear_space_info_full(struct btrfs_fs_info *info);
-
-/*
- * Different levels for to flush space when doing space reservations.
- *
- * The higher the level, the more methods we try to reclaim space.
- */
-enum btrfs_reserve_flush_enum {
-	/* If we are in the transaction, we can't flush anything.*/
-	BTRFS_RESERVE_NO_FLUSH,
-
-	/*
-	 * Flush space by:
-	 * - Running delayed inode items
-	 * - Allocating a new chunk
-	 */
-	BTRFS_RESERVE_FLUSH_LIMIT,
-
-	/*
-	 * Flush space by:
-	 * - Running delayed inode items
-	 * - Running delayed refs
-	 * - Running delalloc and waiting for ordered extents
-	 * - Allocating a new chunk
-	 */
-	BTRFS_RESERVE_FLUSH_EVICT,
-
-	/*
-	 * Flush space by above mentioned methods and by:
-	 * - Running delayed iputs
-	 * - Committing transaction
-	 *
-	 * Can be interrupted by a fatal signal.
-	 */
-	BTRFS_RESERVE_FLUSH_DATA,
-	BTRFS_RESERVE_FLUSH_FREE_SPACE_INODE,
-	BTRFS_RESERVE_FLUSH_ALL,
-
-	/*
-	 * Pretty much the same as FLUSH_ALL, but can also steal space from
-	 * global rsv.
-	 *
-	 * Can be interrupted by a fatal signal.
-	 */
-	BTRFS_RESERVE_FLUSH_ALL_STEAL,
-};
-
-enum btrfs_flush_state {
-	FLUSH_DELAYED_ITEMS_NR	=	1,
-	FLUSH_DELAYED_ITEMS	=	2,
-	FLUSH_DELAYED_REFS_NR	=	3,
-	FLUSH_DELAYED_REFS	=	4,
-	FLUSH_DELALLOC		=	5,
-	FLUSH_DELALLOC_WAIT	=	6,
-	FLUSH_DELALLOC_FULL	=	7,
-	ALLOC_CHUNK		=	8,
-	ALLOC_CHUNK_FORCE	=	9,
-	RUN_DELAYED_IPUTS	=	10,
-	COMMIT_TRANS		=	11,
-};
 
 int btrfs_subvolume_reserve_metadata(struct btrfs_root *root,
 				     struct btrfs_block_rsv *rsv,
@@ -3274,6 +3225,8 @@ int btrfs_uuid_tree_add(struct btrfs_trans_handle *trans, u8 *uuid, u8 type,
 			u64 subid);
 int btrfs_uuid_tree_remove(struct btrfs_trans_handle *trans, u8 *uuid, u8 type,
 			u64 subid);
+int btrfs_uuid_tree_check_overflow(struct btrfs_fs_info *fs_info,
+				   u8 *uuid, u8 type);
 int btrfs_uuid_tree_iterate(struct btrfs_fs_info *fs_info);
 
 /* dir-item.c */
@@ -3389,6 +3342,8 @@ int btrfs_start_delalloc_roots(struct btrfs_fs_info *fs_info, long nr,
 int btrfs_set_extent_delalloc(struct btrfs_inode *inode, u64 start, u64 end,
 			      unsigned int extra_bits,
 			      struct extent_state **cached_state);
+int btrfs_reset_extent_delalloc(struct btrfs_inode *inode, u64 start, u64 end,
+				unsigned int extra_bits, struct extent_state **cached_state);
 struct btrfs_new_inode_args {
 	/* Input */
 	struct inode *dir;

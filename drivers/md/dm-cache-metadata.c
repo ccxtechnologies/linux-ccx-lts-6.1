@@ -162,10 +162,11 @@ struct dm_cache_metadata {
 	struct dm_bitset_cursor dirty_cursor;
 };
 
-/*-------------------------------------------------------------------
+/*
+ *-----------------------------------------------------------------
  * superblock validator
- *-----------------------------------------------------------------*/
-
+ *-----------------------------------------------------------------
+ */
 #define SUPERBLOCK_CSUM_XOR 9031977
 
 static void sb_prepare_for_write(struct dm_block_validator *v,
@@ -533,6 +534,7 @@ static int __create_persistent_data_objects(struct dm_cache_metadata *cmd,
 					    bool may_format_device)
 {
 	int r;
+
 	cmd->bm = dm_block_manager_create(cmd->bdev, DM_CACHE_METADATA_BLOCK_SIZE << SECTOR_SHIFT,
 					  CACHE_MAX_CONCURRENT_LOCKS);
 	if (IS_ERR(cmd->bm)) {
@@ -566,6 +568,7 @@ static void update_flags(struct cache_disk_superblock *disk_super,
 			 flags_mutator mutator)
 {
 	uint32_t sb_flags = mutator(le32_to_cpu(disk_super->flags));
+
 	disk_super->flags = cpu_to_le32(sb_flags);
 }
 
@@ -730,6 +733,7 @@ static int __commit_transaction(struct dm_cache_metadata *cmd,
 static __le64 pack_value(dm_oblock_t block, unsigned int flags)
 {
 	uint64_t value = from_oblock(block);
+
 	value <<= 16;
 	value = value | (flags & FLAGS_MASK);
 	return cpu_to_le64(value);
@@ -739,6 +743,7 @@ static void unpack_value(__le64 value_le, dm_oblock_t *block, unsigned int *flag
 {
 	uint64_t value = le64_to_cpu(value_le);
 	uint64_t b = value >> 16;
+
 	*block = to_oblock(b);
 	*flags = value & FLAGS_MASK;
 }
@@ -1017,6 +1022,12 @@ static bool cmd_write_lock(struct dm_cache_metadata *cmd)
 			return;			\
 	} while(0)
 
+#define WRITE_LOCK_OR_GOTO(cmd, label)		\
+	do {					\
+		if (!cmd_write_lock((cmd)))	\
+			goto label;		\
+	} while (0)
+
 #define WRITE_UNLOCK(cmd) \
 	up_write(&(cmd)->root_lock)
 
@@ -1252,6 +1263,7 @@ static int __insert(struct dm_cache_metadata *cmd,
 {
 	int r;
 	__le64 value = pack_value(oblock, M_VALID);
+
 	__dm_bless_for_disk(&value);
 
 	r = dm_array_set_value(&cmd->info, cmd->root, from_cblock(cblock),
@@ -1578,6 +1590,7 @@ static int __set_dirty_bits_v1(struct dm_cache_metadata *cmd, unsigned int nr_bi
 {
 	int r;
 	unsigned int i;
+
 	for (i = 0; i < nr_bits; i++) {
 		r = __dirty(cmd, to_cblock(i), test_bit(i, bits));
 		if (r)
@@ -1748,17 +1761,6 @@ int dm_cache_write_hints(struct dm_cache_metadata *cmd, struct dm_cache_policy *
 	return r;
 }
 
-int dm_cache_metadata_all_clean(struct dm_cache_metadata *cmd, bool *result)
-{
-	int r;
-
-	READ_LOCK(cmd);
-	r = blocks_are_unmapped_or_clean(cmd, 0, cmd->cache_blocks, result);
-	READ_UNLOCK(cmd);
-
-	return r;
-}
-
 void dm_cache_metadata_set_read_only(struct dm_cache_metadata *cmd)
 {
 	WRITE_LOCK_VOID(cmd);
@@ -1825,11 +1827,8 @@ int dm_cache_metadata_abort(struct dm_cache_metadata *cmd)
 	new_bm = dm_block_manager_create(cmd->bdev, DM_CACHE_METADATA_BLOCK_SIZE << SECTOR_SHIFT,
 					 CACHE_MAX_CONCURRENT_LOCKS);
 
-	WRITE_LOCK(cmd);
-	if (cmd->fail_io) {
-		WRITE_UNLOCK(cmd);
-		goto out;
-	}
+	/* cmd_write_lock() already checks fail_io with cmd->root_lock held */
+	WRITE_LOCK_OR_GOTO(cmd, out);
 
 	__destroy_persistent_data_objects(cmd, false);
 	old_bm = cmd->bm;

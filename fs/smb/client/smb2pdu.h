@@ -79,7 +79,7 @@ struct smb2_symlink_err_rsp {
 struct smb2_error_context_rsp {
 	__le32 ErrorDataLength;
 	__le32 ErrorId;
-	__u8  ErrorContextData; /* ErrorDataLength long array */
+	__u8  ErrorContextData[];
 } __packed;
 
 /* ErrorId values */
@@ -168,15 +168,6 @@ struct durable_reconnect_context_v2 {
 	} Fid;
 	__u8 CreateGuid[16];
 	__le32 Flags; /* see above DHANDLE_FLAG_PERSISTENT */
-} __packed;
-
-/* See MS-SMB2 2.2.14.2.9 */
-struct create_on_disk_id {
-	struct create_context ccontext;
-	__u8   Name[8];
-	__le64 DiskFileId;
-	__le64 VolumeId;
-	__u32  Reserved[4];
 } __packed;
 
 /* See MS-SMB2 2.2.14.2.12 */

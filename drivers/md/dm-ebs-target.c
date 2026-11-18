@@ -102,7 +102,7 @@ static int __ebs_rw_bvec(struct ebs_c *ec, enum req_op op, struct bio_vec *bv,
 			} else {
 				flush_dcache_page(bv->bv_page);
 				memcpy(ba, pa, cur_len);
-				dm_bufio_mark_partial_buffer_dirty(b, buf_off, buf_off + cur_len);
+				dm_bufio_mark_buffer_dirty(b);
 			}
 
 			dm_bufio_release(b);
@@ -241,7 +241,7 @@ static void __ebs_process_bios(struct work_struct *ws)
  * <offset>: offset in 512 bytes sectors into <dev_path>
  * <ebs>: emulated block size in units of 512 bytes exposed to the upper layer
  * [<ubs>]: underlying block size in units of 512 bytes imposed on the lower layer;
- * 	    optional, if not supplied, retrieve logical block size from underlying device
+ *	    optional, if not supplied, retrieve logical block size from underlying device
  */
 static int ebs_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
@@ -264,8 +264,7 @@ static int ebs_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	r = -EINVAL;
 	if (sscanf(argv[1], "%llu%c", &tmp, &dummy) != 1 ||
-	    tmp != (sector_t)tmp ||
-	    (sector_t)tmp >= ti->len) {
+	    tmp != (sector_t)tmp) {
 		ti->error = "Invalid device offset sector";
 		goto bad;
 	}
